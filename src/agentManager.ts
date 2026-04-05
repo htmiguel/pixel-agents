@@ -102,6 +102,7 @@ export async function launchNewTerminal(
   const folderName = isMultiRoot && cwd ? path.basename(cwd) : undefined;
   const agent: AgentState = {
     id,
+    providerId: 'claude',
     sessionId,
     terminalRef: terminal,
     isExternal: false,
@@ -244,6 +245,7 @@ export function persistAgents(
   for (const agent of agents.values()) {
     persisted.push({
       id: agent.id,
+      providerId: agent.providerId,
       sessionId: agent.sessionId,
       terminalName: agent.terminalRef?.name ?? '',
       isExternal: agent.isExternal || undefined,
@@ -305,6 +307,7 @@ export function restoreAgents(
 
     const agent: AgentState = {
       id: p.id,
+      providerId: p.providerId ?? 'claude',
       sessionId: p.sessionId || path.basename(p.jsonlFile, '.jsonl'),
       terminalRef: terminal,
       isExternal,

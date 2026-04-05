@@ -419,6 +419,7 @@ function adoptTerminalForFile(
   const sessionId = path.basename(jsonlFile, '.jsonl');
   const agent: AgentState = {
     id,
+    providerId: 'claude',
     sessionId,
     terminalRef: terminal,
     isExternal: false,
@@ -490,6 +491,7 @@ function adoptExternalSession(
   }
   const agent: AgentState = {
     id,
+    providerId: 'claude',
     sessionId: path.basename(jsonlFile, '.jsonl'),
     terminalRef: undefined,
     isExternal: true,

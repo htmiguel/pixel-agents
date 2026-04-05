@@ -2,6 +2,8 @@ import type * as vscode from 'vscode';
 
 export interface AgentState {
   id: number;
+  /** Backend/provider identifier (e.g. 'claude', 'codex', 'cursor'). */
+  providerId: string;
   sessionId: string;
   /** Terminal reference — undefined for extension panel sessions */
   terminalRef?: vscode.Terminal;
@@ -34,6 +36,8 @@ export interface AgentState {
 
 export interface PersistedAgent {
   id: number;
+  /** Backend/provider identifier used for hook routing. */
+  providerId?: string;
   sessionId?: string;
   /** Terminal name — empty string for extension panel sessions */
   terminalName: string;

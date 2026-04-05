@@ -10,7 +10,7 @@ import { HOOK_EVENT_BUFFER_MS } from './constants.js';
 export interface HookEvent {
   /** Hook event name (e.g., 'Stop', 'PermissionRequest', 'Notification') */
   hook_event_name: string;
-  /** Claude Code session ID, maps to JSONL filename */
+  /** Provider session ID, maps to JSONL filename */
   session_id: string;
   /** Additional provider-specific fields (notification_type, tool_name, etc.) */
   [key: string]: unknown;
@@ -26,9 +26,9 @@ interface BufferedEvent {
 /**
  * Routes hook events from the HTTP server to the correct agent.
  *
- * Maps `session_id` from hook events to internal agent IDs. Events that arrive
- * before their agent is registered are buffered for up to HOOK_EVENT_BUFFER_MS
- * and flushed when the agent registers.
+ * Maps `providerId + session_id` from hook events to internal agent IDs.
+ * Events that arrive before their agent is registered are buffered for up to
+ * HOOK_EVENT_BUFFER_MS and flushed when the matching provider+session registers.
  *
  * When an event is successfully delivered, sets `agent.hookDelivered = true` which
  * suppresses heuristic timers (permission 7s, text-idle 5s) for that agent.
@@ -45,16 +45,19 @@ export class HookEventHandler {
     private getWebview: () => vscode.Webview | undefined,
   ) {}
 
-  /** Register an agent for hook event routing. Flushes any buffered events for this session. */
-  registerAgent(sessionId: string, agentId: number): void {
-    this.sessionToAgentId.set(sessionId, agentId);
-    // Flush any buffered events for this session
-    this.flushBufferedEvents(sessionId);
+  private getProviderSessionKey(providerId: string, sessionId: string): string {
+    return `${providerId}:${sessionId}`;
   }
 
-  /** Remove an agent's session mapping (called on agent removal/terminal close). */
-  unregisterAgent(sessionId: string): void {
-    this.sessionToAgentId.delete(sessionId);
+  /** Register an agent for hook event routing. Flushes buffered events for this provider/session. */
+  registerAgent(sessionId: string, agentId: number, providerId = 'claude'): void {
+    this.sessionToAgentId.set(this.getProviderSessionKey(providerId, sessionId), agentId);
+    this.flushBufferedEvents(sessionId, providerId);
+  }
+
+  /** Remove an agent's provider/session mapping (called on agent removal/terminal close). */
+  unregisterAgent(sessionId: string, providerId = 'claude'): void {
+    this.sessionToAgentId.delete(this.getProviderSessionKey(providerId, sessionId));
   }
 
   /**
@@ -63,13 +66,16 @@ export class HookEventHandler {
    * @param providerId - Provider that sent the event ('claude', 'codex', etc.)
    * @param event - The hook event payload from the CLI tool
    */
-  handleEvent(_providerId: string, event: HookEvent): void {
-    let agentId = this.sessionToAgentId.get(event.session_id);
+  handleEvent(providerId: string, event: HookEvent): void {
+    let agentId = this.sessionToAgentId.get(
+      this.getProviderSessionKey(providerId, event.session_id),
+    );
     if (agentId === undefined) {
-      // Try auto-discovery: scan agents map for matching sessionId
+      // Try auto-discovery: scan agents map for matching provider/session pair
       for (const [id, agent] of this.agents) {
-        if (agent.sessionId === event.session_id) {
-          this.registerAgent(agent.sessionId, id);
+        const agentProviderId = agent.providerId || 'claude';
+        if (agent.sessionId === event.session_id && agentProviderId === providerId) {
+          this.registerAgent(agent.sessionId, id, agentProviderId);
           agentId = id;
           break;
         }
@@ -77,7 +83,7 @@ export class HookEventHandler {
     }
     if (agentId === undefined) {
       // Buffer the event -- agent might not be registered yet
-      this.bufferEvent(_providerId, event);
+      this.bufferEvent(providerId, event);
       return;
     }
 
@@ -148,7 +154,7 @@ export class HookEventHandler {
     }
   }
 
-  /** Handle Stop: Claude finished responding, mark agent as waiting. */
+  /** Handle Stop: provider finished responding, mark agent as waiting. */
   private handleStop(
     agent: AgentState,
     agentId: number,
@@ -226,10 +232,14 @@ export class HookEventHandler {
     }
   }
 
-  /** Deliver all buffered events for a session that just registered. */
-  private flushBufferedEvents(sessionId: string): void {
-    const toFlush = this.bufferedEvents.filter((b) => b.event.session_id === sessionId);
-    this.bufferedEvents = this.bufferedEvents.filter((b) => b.event.session_id !== sessionId);
+  /** Deliver all buffered events for a provider/session that just registered. */
+  private flushBufferedEvents(sessionId: string, providerId: string): void {
+    const toFlush = this.bufferedEvents.filter(
+      (b) => b.event.session_id === sessionId && b.providerId === providerId,
+    );
+    this.bufferedEvents = this.bufferedEvents.filter(
+      (b) => !(b.event.session_id === sessionId && b.providerId === providerId),
+    );
     for (const { providerId, event } of toFlush) {
       this.handleEvent(providerId, event);
     }
