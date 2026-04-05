@@ -8,6 +8,7 @@ function createTestAgent(overrides: Partial<AgentState> = {}): AgentState {
   return {
     id: 1,
     providerId: 'claude',
+    agentType: 'claude',
     sessionId: 'sess-1',
     terminalRef: undefined,
     isExternal: true,
