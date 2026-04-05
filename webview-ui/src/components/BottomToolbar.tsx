@@ -68,6 +68,7 @@ export function BottomToolbar({
     { id: 'claude', label: 'Claude' },
     { id: 'codex', label: 'Codex' },
     { id: 'antigravity', label: 'Antigravity' },
+    { id: 'copilot-cli', label: 'Copilot CLI' },
   ];
 
   return (

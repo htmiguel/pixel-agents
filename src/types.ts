@@ -1,6 +1,6 @@
 import type * as vscode from 'vscode';
 
-export type AgentType = 'claude' | 'codex' | 'antigravity';
+export type AgentType = 'claude' | 'codex' | 'antigravity' | 'copilot' | 'copilot-cli';
 
 export interface AgentState {
   id: number;

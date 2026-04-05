@@ -11,6 +11,7 @@ import {
   uninstallHooks,
 } from '../server/src/providers/file/claudeHookInstaller.js';
 import { PixelAgentsServer } from '../server/src/server.js';
+import { CopilotAdapter } from './adapters/copilot.js';
 import {
   getAllProjectDirPaths,
   getProjectDirPath,
@@ -79,6 +80,9 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
   // External session detection (VS Code extension panel, etc.)
   externalScanTimer: ReturnType<typeof setInterval> | null = null;
   staleCheckTimer: ReturnType<typeof setInterval> | null = null;
+
+  // GitHub Copilot adapter disposable
+  private copilotAdapterDisposable: vscode.Disposable | null = null;
 
   // Global session scanning (opt-in "Watch All Sessions" toggle)
   watchAllSessions = { current: false };
@@ -309,6 +313,16 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         // Register all restored agents with hook handler
         for (const agent of this.agents.values()) {
           this.registerAgentHook(agent);
+        }
+
+        // Start GitHub Copilot adapter (no-op when Copilot Chat is not installed)
+        if (!this.copilotAdapterDisposable) {
+          this.copilotAdapterDisposable = new CopilotAdapter().start({
+            agents: this.agents,
+            nextAgentIdRef: this.nextAgentId,
+            webview: this.webview,
+            persistAgents: this.persistAgents,
+          });
         }
         // Send persisted settings to webview
         const soundEnabled = this.context.globalState.get<boolean>(GLOBAL_KEY_SOUND_ENABLED, true);
@@ -776,6 +790,8 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
       clearInterval(this.staleCheckTimer);
       this.staleCheckTimer = null;
     }
+    this.copilotAdapterDisposable?.dispose();
+    this.copilotAdapterDisposable = null;
   }
 }
 

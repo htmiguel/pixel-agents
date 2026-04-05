@@ -5,6 +5,7 @@ import * as vscode from 'vscode';
 
 import { JSONL_POLL_INTERVAL_MS } from '../server/src/constants.js';
 import {
+  COPILOT_CLI_TERMINAL_NAME_PREFIX,
   TERMINAL_NAME_PREFIX,
   WORKSPACE_KEY_AGENT_SEATS,
   WORKSPACE_KEY_AGENTS,
@@ -89,6 +90,9 @@ export async function launchNewTerminal(
   folderPath?: string,
   bypassPermissions?: boolean,
 ): Promise<void> {
+  const isCopilotCli = agentType === 'copilot-cli';
+  const namePrefix = isCopilotCli ? COPILOT_CLI_TERMINAL_NAME_PREFIX : TERMINAL_NAME_PREFIX;
+
   const folders = vscode.workspace.workspaceFolders;
   // Use home directory as fallback cwd when no workspace is open (common on Linux/macOS).
   // This ensures the terminal starts in a predictable location that matches the project
@@ -97,10 +101,11 @@ export async function launchNewTerminal(
   const isMultiRoot = !!(folders && folders.length > 1);
   const idx = nextTerminalIndexRef.current++;
 
-  // Format the agent name based on type
-  const agentNamePrefix = agentType.charAt(0).toUpperCase() + agentType.slice(1);
-  const terminalName =
-    agentType === 'claude' ? `${TERMINAL_NAME_PREFIX} #${idx}` : `${agentNamePrefix} #${idx}`;
+  const terminalName = isCopilotCli
+    ? `${namePrefix} #${idx}`
+    : agentType === 'claude'
+      ? `${TERMINAL_NAME_PREFIX} #${idx}`
+      : `${agentType.charAt(0).toUpperCase() + agentType.slice(1)} #${idx}`;
 
   const terminal = vscode.window.createTerminal({
     name: terminalName,
@@ -108,34 +113,138 @@ export async function launchNewTerminal(
   });
   terminal.show();
 
-  const sessionId = crypto.randomUUID();
-  const cmdName = agentType === 'codex' ? 'codex'
-    : agentType === 'antigravity' ? 'antigravity'
-    : 'claude';
-  const baseCmd = `${cmdName} --session-id ${sessionId}`;
-  const fullCmd = bypassPermissions
-    ? `${baseCmd} --dangerously-skip-permissions`
-    : baseCmd;
-  terminal.sendText(fullCmd);
+  if (isCopilotCli) {
+    terminal.sendText('copilot');
+  } else {
+    const sessionId = crypto.randomUUID();
+    const cmdName =
+      agentType === 'codex' ? 'codex' : agentType === 'antigravity' ? 'antigravity' : 'claude';
+    const baseCmd = `${cmdName} --session-id ${sessionId}`;
+    const fullCmd = bypassPermissions ? `${baseCmd} --dangerously-skip-permissions` : baseCmd;
+    terminal.sendText(fullCmd);
 
-  const projectDir = getProjectDirPath(agentType, cwd);
+    const projectDir = getProjectDirPath(agentType, cwd);
 
-  // Pre-register expected JSONL file so project scan won't treat it as a /clear file
-  const expectedFile = path.join(projectDir, `${sessionId}.jsonl`);
-  knownJsonlFiles.add(expectedFile);
+    // Pre-register expected JSONL file so project scan won't treat it as a /clear file
+    const expectedFile = path.join(projectDir, `${sessionId}.jsonl`);
+    knownJsonlFiles.add(expectedFile);
 
-  // Create agent immediately (before JSONL file exists)
+    // Create agent immediately (before JSONL file exists)
+    const id = nextAgentIdRef.current++;
+    const folderName = isMultiRoot && cwd ? path.basename(cwd) : undefined;
+    const agent: AgentState = {
+      id,
+      providerId: cmdName,
+      sessionId,
+      terminalRef: terminal,
+      isExternal: false,
+      projectDir,
+      jsonlFile: expectedFile,
+      agentType: agentType as AgentType,
+      fileOffset: 0,
+      lineBuffer: '',
+      activeToolIds: new Set(),
+      activeToolStatuses: new Map(),
+      activeToolNames: new Map(),
+      activeSubagentToolIds: new Map(),
+      activeSubagentToolNames: new Map(),
+      backgroundAgentToolIds: new Set(),
+      isWaiting: false,
+      permissionSent: false,
+      hadToolsInTurn: false,
+      lastDataAt: 0,
+      linesProcessed: 0,
+      seenUnknownRecordTypes: new Set(),
+      folderName,
+      hookDelivered: false,
+    };
+
+    agents.set(id, agent);
+    activeAgentIdRef.current = id;
+    persistAgents();
+    console.log(`[Pixel Agents] Agent ${id}: created for terminal ${terminal.name}`);
+    webview?.postMessage({ type: 'agentCreated', id, folderName });
+
+    ensureProjectScan(
+      [projectDir],
+      knownJsonlFiles,
+      projectScanTimerRef,
+      activeAgentIdRef,
+      nextAgentIdRef,
+      agents,
+      fileWatchers,
+      pollingTimers,
+      waitingTimers,
+      permissionTimers,
+      webview,
+      persistAgents,
+    );
+
+    // Poll for the specific JSONL file to appear
+    let pollCount = 0;
+    console.log(`[Pixel Agents] Agent ${id}: waiting for JSONL at ${agent.jsonlFile}`);
+    const pollTimer = setInterval(() => {
+      pollCount++;
+      try {
+        if (fs.existsSync(agent.jsonlFile)) {
+          console.log(
+            `[Pixel Agents] Agent ${id}: found JSONL file ${path.basename(agent.jsonlFile)} (after ${pollCount}s)`,
+          );
+          clearInterval(pollTimer);
+          jsonlPollTimers.delete(id);
+          startFileWatching(
+            id,
+            agent.jsonlFile,
+            agents,
+            fileWatchers,
+            pollingTimers,
+            waitingTimers,
+            permissionTimers,
+            webview,
+          );
+          readNewLines(id, agents, waitingTimers, permissionTimers, webview);
+        } else if (pollCount === 10) {
+          // After 10s of polling, warn with path details to help diagnose path encoding mismatches
+          const dirExists = fs.existsSync(projectDir);
+          let dirContents = '';
+          if (dirExists) {
+            try {
+              const files = fs.readdirSync(projectDir).filter((f) => f.endsWith('.jsonl'));
+              dirContents =
+                files.length > 0
+                  ? `Dir has ${files.length} JSONL file(s): ${files.slice(0, 3).join(', ')}${files.length > 3 ? '...' : ''}`
+                  : 'Dir exists but has no JSONL files';
+            } catch {
+              dirContents = 'Dir exists but unreadable';
+            }
+          } else {
+            dirContents = 'Dir does not exist';
+          }
+          console.warn(
+            `[Pixel Agents] Agent ${id}: JSONL file not found after 10s. ` +
+              `Expected: ${agent.jsonlFile}. ${dirContents}`,
+          );
+        }
+      } catch {
+        /* file may not exist yet */
+      }
+    }, JSONL_POLL_INTERVAL_MS);
+    jsonlPollTimers.set(id, pollTimer);
+    return;
+  }
+
+  // Copilot CLI agent — no JSONL file tracking
   const id = nextAgentIdRef.current++;
   const folderName = isMultiRoot && cwd ? path.basename(cwd) : undefined;
   const agent: AgentState = {
     id,
-    providerId: 'claude',
-    sessionId,
+    providerId: 'copilot',
+    sessionId: '',
     terminalRef: terminal,
     isExternal: false,
-    projectDir,
-    jsonlFile: expectedFile,
-    agentType: agentType as AgentType,
+    projectDir: '',
+    jsonlFile: '',
+    agentType: 'copilot-cli' as AgentType,
     fileOffset: 0,
     lineBuffer: '',
     activeToolIds: new Set(),
@@ -157,74 +266,8 @@ export async function launchNewTerminal(
   agents.set(id, agent);
   activeAgentIdRef.current = id;
   persistAgents();
-  console.log(`[Pixel Agents] Agent ${id}: created for terminal ${terminal.name}`);
+  console.log(`[Pixel Agents] Copilot CLI Agent ${id}: created for terminal ${terminal.name}`);
   webview?.postMessage({ type: 'agentCreated', id, folderName });
-
-  ensureProjectScan(
-    [projectDir],
-    knownJsonlFiles,
-    projectScanTimerRef,
-    activeAgentIdRef,
-    nextAgentIdRef,
-    agents,
-    fileWatchers,
-    pollingTimers,
-    waitingTimers,
-    permissionTimers,
-    webview,
-    persistAgents,
-  );
-
-  // Poll for the specific JSONL file to appear
-  let pollCount = 0;
-  console.log(`[Pixel Agents] Agent ${id}: waiting for JSONL at ${agent.jsonlFile}`);
-  const pollTimer = setInterval(() => {
-    pollCount++;
-    try {
-      if (fs.existsSync(agent.jsonlFile)) {
-        console.log(
-          `[Pixel Agents] Agent ${id}: found JSONL file ${path.basename(agent.jsonlFile)} (after ${pollCount}s)`,
-        );
-        clearInterval(pollTimer);
-        jsonlPollTimers.delete(id);
-        startFileWatching(
-          id,
-          agent.jsonlFile,
-          agents,
-          fileWatchers,
-          pollingTimers,
-          waitingTimers,
-          permissionTimers,
-          webview,
-        );
-        readNewLines(id, agents, waitingTimers, permissionTimers, webview);
-      } else if (pollCount === 10) {
-        // After 10s of polling, warn with path details to help diagnose path encoding mismatches
-        const dirExists = fs.existsSync(projectDir);
-        let dirContents = '';
-        if (dirExists) {
-          try {
-            const files = fs.readdirSync(projectDir).filter((f) => f.endsWith('.jsonl'));
-            dirContents =
-              files.length > 0
-                ? `Dir has ${files.length} JSONL file(s): ${files.slice(0, 3).join(', ')}${files.length > 3 ? '...' : ''}`
-                : 'Dir exists but has no JSONL files';
-          } catch {
-            dirContents = 'Dir exists but unreadable';
-          }
-        } else {
-          dirContents = 'Dir does not exist';
-        }
-        console.warn(
-          `[Pixel Agents] Agent ${id}: JSONL file not found after 10s. ` +
-            `Expected: ${agent.jsonlFile}. ${dirContents}`,
-        );
-      }
-    } catch {
-      /* file may not exist yet */
-    }
-  }, JSONL_POLL_INTERVAL_MS);
-  jsonlPollTimers.set(id, pollTimer);
 }
 
 export function removeAgent(
@@ -320,6 +363,10 @@ export function restoreAgents(
 
     let terminal: vscode.Terminal | undefined;
     const isExternal = p.isExternal ?? false;
+    // Copilot agents are re-created by CopilotAdapter on every startup — skip restoring them.
+    // Copilot CLI agents have no JSONL tracking — skip restoring them too.
+    const pAgentType = p.agentType ?? 'claude';
+    if (pAgentType === 'copilot' || pAgentType === 'copilot-cli') continue;
 
     if (isExternal) {
       // External agents — restore if JSONL file still exists on disk
