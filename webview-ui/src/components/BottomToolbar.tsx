@@ -69,6 +69,8 @@ export function BottomToolbar({
     { id: 'codex', label: 'Codex' },
     { id: 'antigravity', label: 'Antigravity' },
     { id: 'copilot-cli', label: 'Copilot CLI' },
+    { id: 'opencode', label: 'Opencode' },
+    { id: 'vscode-terminal', label: 'VS Code Terminal' },
   ];
 
   return (

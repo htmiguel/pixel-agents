@@ -27,6 +27,16 @@ export function getProjectDirPath(agentType: AgentType | string, cwd?: string): 
   let agentFolder = '.claude';
   if (agentType === 'codex') agentFolder = '.codex';
   if (agentType === 'antigravity') agentFolder = '.antigravity';
+  if (agentType === 'opencode') {
+    const opencodeHome =
+      process.env.OPENCODE_HOME ||
+      (os.platform() === 'win32'
+        ? path.join(os.homedir(), '.opencode')
+        : path.join(os.homedir(), '.local', 'share', 'opencode'));
+    const projectDir = path.join(opencodeHome, 'sessions', dirName);
+    console.log(`[Pixel Agents] Project dir: ${workspacePath} → ${dirName} for opencode`);
+    return projectDir;
+  }
 
   const projectDir = path.join(os.homedir(), agentFolder, 'projects', dirName);
   console.log(`[Pixel Agents] Project dir: ${workspacePath} → ${dirName} for ${agentType}`);
@@ -65,10 +75,16 @@ export function getAllProjectDirPaths(cwd?: string): string[] {
   const workspacePath = cwd || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   if (!workspacePath) return [];
   const dirName = workspacePath.replace(/[^a-zA-Z0-9-]/g, '-');
+  const opencodeHome =
+    process.env.OPENCODE_HOME ||
+    (os.platform() === 'win32'
+      ? path.join(os.homedir(), '.opencode')
+      : path.join(os.homedir(), '.local', 'share', 'opencode'));
   return [
     path.join(os.homedir(), '.claude', 'projects', dirName),
     path.join(os.homedir(), '.codex', 'projects', dirName),
     path.join(os.homedir(), '.antigravity', 'projects', dirName),
+    path.join(opencodeHome, 'sessions', dirName),
   ];
 }
 
@@ -113,13 +129,19 @@ export async function launchNewTerminal(
   });
   terminal.show();
 
-  if (isCopilotCli) {
-    terminal.sendText('copilot');
+  const noTranscript = agentType === 'copilot-cli' || agentType === 'vscode-terminal';
+  if (noTranscript) {
+    if (agentType === 'copilot-cli') terminal.sendText('copilot');
+    // vscode-terminal: no command — just an interactive shell
   } else {
     const sessionId = crypto.randomUUID();
-    const cmdName =
-      agentType === 'codex' ? 'codex' : agentType === 'antigravity' ? 'antigravity' : 'claude';
-    const baseCmd = `${cmdName} --session-id ${sessionId}`;
+    const cmdMap: Record<string, string> = {
+      codex: 'codex',
+      antigravity: 'antigravity',
+      opencode: 'opencode',
+    };
+    const cmdName = cmdMap[agentType] ?? 'claude';
+    const baseCmd = agentType === 'opencode' ? cmdName : `${cmdName} --session-id ${sessionId}`;
     const fullCmd = bypassPermissions ? `${baseCmd} --dangerously-skip-permissions` : baseCmd;
     terminal.sendText(fullCmd);
 
@@ -233,18 +255,18 @@ export async function launchNewTerminal(
     return;
   }
 
-  // Copilot CLI agent — no JSONL file tracking
+  // No-transcript agent (copilot-cli / vscode-terminal) — no JSONL file tracking
   const id = nextAgentIdRef.current++;
   const folderName = isMultiRoot && cwd ? path.basename(cwd) : undefined;
   const agent: AgentState = {
     id,
-    providerId: 'copilot',
+    providerId: agentType === 'copilot-cli' ? 'copilot' : 'vscode-terminal',
     sessionId: '',
     terminalRef: terminal,
     isExternal: false,
     projectDir: '',
     jsonlFile: '',
-    agentType: 'copilot-cli' as AgentType,
+    agentType: agentType as AgentType,
     fileOffset: 0,
     lineBuffer: '',
     activeToolIds: new Set(),
