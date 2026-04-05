@@ -149,12 +149,12 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
    *  when an actual hook event arrives, preserving heuristic fallback for agents
    *  where hooks aren't working (older Claude, hooks not installed, etc.) */
   registerAgentHook(agent: AgentState): void {
-    this.hookEventHandler?.registerAgent(agent.sessionId, agent.id);
+    this.hookEventHandler?.registerAgent(agent.sessionId, agent.id, agent.providerId);
   }
 
   /** Unregister an agent from the hook event handler */
   unregisterAgentHook(agent: AgentState): void {
-    this.hookEventHandler?.unregisterAgent(agent.sessionId);
+    this.hookEventHandler?.unregisterAgent(agent.sessionId, agent.providerId);
   }
 
   resolveWebviewView(webviewView: vscode.WebviewView) {

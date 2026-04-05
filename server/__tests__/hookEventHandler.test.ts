@@ -7,6 +7,8 @@ import { HookEventHandler } from '../src/hookEventHandler.js';
 function createTestAgent(overrides: Partial<AgentState> = {}): AgentState {
   return {
     id: 1,
+    providerId: 'claude',
+    sessionId: 'sess-1',
     terminalRef: undefined,
     isExternal: true,
     projectDir: '/test',
@@ -24,10 +26,10 @@ function createTestAgent(overrides: Partial<AgentState> = {}): AgentState {
     hadToolsInTurn: false,
     lastDataAt: 0,
     linesProcessed: 0,
-    hasScannedSinceIdle: false,
+    hookDelivered: false,
     seenUnknownRecordTypes: new Set(),
     ...overrides,
-  } as AgentState;
+  };
 }
 
 function createMockWebview() {
@@ -228,7 +230,8 @@ describe('HookEventHandler', () => {
 
   // 10. Flushes buffer on registerAgent
   it('flushes buffered events on registerAgent', () => {
-    const agent = createTestAgent({ id: 1 });
+    // Use a different session id so auto-discovery does not consume the buffered event.
+    const agent = createTestAgent({ id: 1, sessionId: 'different-session' });
     agents.set(1, agent);
 
     // Buffer event before registration
@@ -284,7 +287,44 @@ describe('HookEventHandler', () => {
     expect(agent.isWaiting).toBe(true);
   });
 
-  // 13. Dispose cleans up
+  // 13. Routes events by provider when session IDs collide
+  it('routes events by provider when session IDs collide', () => {
+    const claudeAgent = createTestAgent({ id: 1, providerId: 'claude', sessionId: 'shared-sess' });
+    const codexAgent = createTestAgent({ id: 2, providerId: 'codex', sessionId: 'shared-sess' });
+    agents.set(1, claudeAgent);
+    agents.set(2, codexAgent);
+    handler.registerAgent('shared-sess', 1, 'claude');
+    handler.registerAgent('shared-sess', 2, 'codex');
+
+    handler.handleEvent('codex', {
+      hook_event_name: 'Stop',
+      session_id: 'shared-sess',
+    });
+
+    expect(codexAgent.isWaiting).toBe(true);
+    expect(claudeAgent.isWaiting).toBe(false);
+    const codexWaitMsg = mockWebview.messages.find(
+      (m) => m.type === 'agentStatus' && m.status === 'waiting' && m.id === 2,
+    );
+    expect(codexWaitMsg).toBeTruthy();
+  });
+
+  // 14. Mismatched providers stay isolated
+  it('does not deliver events to mismatched providers', () => {
+    const claudeAgent = createTestAgent({ id: 1, providerId: 'claude', sessionId: 'sess-1' });
+    agents.set(1, claudeAgent);
+    handler.registerAgent('sess-1', 1, 'claude');
+
+    handler.handleEvent('codex', {
+      hook_event_name: 'Stop',
+      session_id: 'sess-1',
+    });
+
+    expect(claudeAgent.isWaiting).toBe(false);
+    expect(mockWebview.messages).toHaveLength(0);
+  });
+
+  // 15. Dispose cleans up
   it('dispose cleans up timers and maps', () => {
     handler.registerAgent('sess-1', 1);
     handler.handleEvent('claude', {

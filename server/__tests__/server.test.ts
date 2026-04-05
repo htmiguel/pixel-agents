@@ -113,6 +113,26 @@ describe('PixelAgentsServer', () => {
     expect(received[0].event.hook_event_name).toBe('Stop');
   });
 
+  // 6. Hook callback preserves non-Claude provider IDs
+  it('hook callback preserves provider ID for non-claude hooks', async () => {
+    const config = await server.start();
+    const received: Array<{ providerId: string; event: Record<string, unknown> }> = [];
+    server.onHookEvent((providerId: string, event: Record<string, unknown>) => {
+      received.push({ providerId, event });
+    });
+
+    await postHook(
+      config.port,
+      config.token,
+      JSON.stringify({ session_id: 'abc', hook_event_name: 'Stop' }),
+      'cursor',
+    );
+
+    expect(received).toHaveLength(1);
+    expect(received[0].providerId).toBe('cursor');
+    expect(received[0].event.session_id).toBe('abc');
+  });
+
   // 6. Hook endpoint rejects oversized body
   it('hook endpoint returns 413 for oversized body', async () => {
     const config = await server.start();
