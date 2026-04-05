@@ -12,9 +12,9 @@ import {
 import { ensureProjectScan, readNewLines, startFileWatching } from './fileWatcher.js';
 import { migrateAndLoadLayout } from './layoutPersistence.js';
 import { cancelPermissionTimer, cancelWaitingTimer } from './timerManager.js';
-import type { AgentState, PersistedAgent } from './types.js';
+import type { AgentState, AgentType, PersistedAgent } from './types.js';
 
-export function getProjectDirPath(cwd?: string): string {
+export function getProjectDirPath(agentType: AgentType | string, cwd?: string): string {
   // Fall back to home directory when no workspace folder is open.
   // This is the common case on Linux/macOS when VS Code is launched without a folder
   // (e.g. `code` with no arguments). Claude Code writes JSONL files to
@@ -22,12 +22,17 @@ export function getProjectDirPath(cwd?: string): string {
   // must use the same directory as the terminal's working directory.
   const workspacePath = cwd || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || os.homedir();
   const dirName = workspacePath.replace(/[^a-zA-Z0-9-]/g, '-');
-  const projectDir = path.join(os.homedir(), '.claude', 'projects', dirName);
-  console.log(`[Pixel Agents] Project dir: ${workspacePath} → ${dirName}`);
+
+  let agentFolder = '.claude';
+  if (agentType === 'codex') agentFolder = '.codex';
+  if (agentType === 'antigravity') agentFolder = '.antigravity';
+
+  const projectDir = path.join(os.homedir(), agentFolder, 'projects', dirName);
+  console.log(`[Pixel Agents] Project dir: ${workspacePath} → ${dirName} for ${agentType}`);
 
   // Verify the directory exists; if not, try fuzzy matching against existing dirs
   if (!fs.existsSync(projectDir)) {
-    const projectsRoot = path.join(os.homedir(), '.claude', 'projects');
+    const projectsRoot = path.join(os.homedir(), agentFolder, 'projects');
     try {
       if (fs.existsSync(projectsRoot)) {
         const candidates = fs.readdirSync(projectsRoot);
@@ -55,6 +60,17 @@ export function getProjectDirPath(cwd?: string): string {
   return projectDir;
 }
 
+export function getAllProjectDirPaths(cwd?: string): string[] {
+  const workspacePath = cwd || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!workspacePath) return [];
+  const dirName = workspacePath.replace(/[^a-zA-Z0-9-]/g, '-');
+  return [
+    path.join(os.homedir(), '.claude', 'projects', dirName),
+    path.join(os.homedir(), '.codex', 'projects', dirName),
+    path.join(os.homedir(), '.antigravity', 'projects', dirName),
+  ];
+}
+
 export async function launchNewTerminal(
   nextAgentIdRef: { current: number },
   nextTerminalIndexRef: { current: number },
@@ -69,6 +85,7 @@ export async function launchNewTerminal(
   projectScanTimerRef: { current: ReturnType<typeof setInterval> | null },
   webview: vscode.Webview | undefined,
   persistAgents: () => void,
+  agentType: string,
   folderPath?: string,
   bypassPermissions?: boolean,
 ): Promise<void> {
@@ -79,19 +96,29 @@ export async function launchNewTerminal(
   const cwd = folderPath || folders?.[0]?.uri.fsPath || os.homedir();
   const isMultiRoot = !!(folders && folders.length > 1);
   const idx = nextTerminalIndexRef.current++;
+
+  // Format the agent name based on type
+  const agentNamePrefix = agentType.charAt(0).toUpperCase() + agentType.slice(1);
+  const terminalName =
+    agentType === 'claude' ? `${TERMINAL_NAME_PREFIX} #${idx}` : `${agentNamePrefix} #${idx}`;
+
   const terminal = vscode.window.createTerminal({
-    name: `${TERMINAL_NAME_PREFIX} #${idx}`,
+    name: terminalName,
     cwd,
   });
   terminal.show();
 
   const sessionId = crypto.randomUUID();
-  const claudeCmd = bypassPermissions
-    ? `claude --session-id ${sessionId} --dangerously-skip-permissions`
-    : `claude --session-id ${sessionId}`;
-  terminal.sendText(claudeCmd);
+  const cmdName = agentType === 'codex' ? 'codex'
+    : agentType === 'antigravity' ? 'antigravity'
+    : 'claude';
+  const baseCmd = `${cmdName} --session-id ${sessionId}`;
+  const fullCmd = bypassPermissions
+    ? `${baseCmd} --dangerously-skip-permissions`
+    : baseCmd;
+  terminal.sendText(fullCmd);
 
-  const projectDir = getProjectDirPath(cwd);
+  const projectDir = getProjectDirPath(agentType, cwd);
 
   // Pre-register expected JSONL file so project scan won't treat it as a /clear file
   const expectedFile = path.join(projectDir, `${sessionId}.jsonl`);
@@ -108,6 +135,7 @@ export async function launchNewTerminal(
     isExternal: false,
     projectDir,
     jsonlFile: expectedFile,
+    agentType: agentType as AgentType,
     fileOffset: 0,
     lineBuffer: '',
     activeToolIds: new Set(),
@@ -133,7 +161,7 @@ export async function launchNewTerminal(
   webview?.postMessage({ type: 'agentCreated', id, folderName });
 
   ensureProjectScan(
-    projectDir,
+    [projectDir],
     knownJsonlFiles,
     projectScanTimerRef,
     activeAgentIdRef,
@@ -251,6 +279,7 @@ export function persistAgents(
       isExternal: agent.isExternal || undefined,
       jsonlFile: agent.jsonlFile,
       projectDir: agent.projectDir,
+      agentType: agent.agentType,
       folderName: agent.folderName,
     });
   }
@@ -313,6 +342,7 @@ export function restoreAgents(
       isExternal,
       projectDir: p.projectDir,
       jsonlFile: p.jsonlFile,
+      agentType: p.agentType || 'claude', // Fallback to claude for older versions
       fileOffset: 0,
       lineBuffer: '',
       activeToolIds: new Set(),
@@ -439,7 +469,7 @@ export function restoreAgents(
   // Start project scan for /clear detection
   if (restoredProjectDir) {
     ensureProjectScan(
-      restoredProjectDir,
+      [restoredProjectDir],
       knownJsonlFiles,
       projectScanTimerRef,
       activeAgentIdRef,

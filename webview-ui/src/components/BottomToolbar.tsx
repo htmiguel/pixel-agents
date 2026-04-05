@@ -1,13 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 
 import type { WorkspaceFolder } from '../hooks/useExtensionMessages.js';
-import { vscode } from '../vscodeApi.js';
 import { Button } from './ui/Button.js';
 import { Dropdown, DropdownItem } from './ui/Dropdown.js';
 
 interface BottomToolbarProps {
   isEditMode: boolean;
-  onOpenClaude: () => void;
+  onOpenAgent: (agentType: string, folderPath?: string) => void;
   onToggleEditMode: () => void;
   isSettingsOpen: boolean;
   onToggleSettings: () => void;
@@ -16,93 +15,81 @@ interface BottomToolbarProps {
 
 export function BottomToolbar({
   isEditMode,
-  onOpenClaude,
+  onOpenAgent,
   onToggleEditMode,
   isSettingsOpen,
   onToggleSettings,
   workspaceFolders,
 }: BottomToolbarProps) {
+  const [isAgentMenuOpen, setIsAgentMenuOpen] = useState(false);
   const [isFolderPickerOpen, setIsFolderPickerOpen] = useState(false);
-  const [isBypassMenuOpen, setIsBypassMenuOpen] = useState(false);
-  const folderPickerRef = useRef<HTMLDivElement>(null);
-  const pendingBypassRef = useRef(false);
-  // Close folder picker / bypass menu on outside click
+  const [pendingAgentType, setPendingAgentType] = useState<string | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Close menus on outside click
   useEffect(() => {
-    if (!isFolderPickerOpen && !isBypassMenuOpen) return;
+    if (!isAgentMenuOpen && !isFolderPickerOpen) return;
     const handleClick = (e: MouseEvent) => {
-      if (folderPickerRef.current && !folderPickerRef.current.contains(e.target as Node)) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setIsAgentMenuOpen(false);
         setIsFolderPickerOpen(false);
-        setIsBypassMenuOpen(false);
       }
     };
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
-  }, [isFolderPickerOpen, isBypassMenuOpen]);
+  }, [isAgentMenuOpen, isFolderPickerOpen]);
 
   const hasMultipleFolders = workspaceFolders.length > 1;
 
   const handleAgentClick = () => {
-    setIsBypassMenuOpen(false);
-    pendingBypassRef.current = false;
+    setIsAgentMenuOpen((v) => !v);
+    setIsFolderPickerOpen(false);
+  };
+
+  const handleAgentSelect = (type: string) => {
     if (hasMultipleFolders) {
-      setIsFolderPickerOpen((v) => !v);
+      setPendingAgentType(type);
+      setIsAgentMenuOpen(false);
+      setIsFolderPickerOpen(true);
     } else {
-      onOpenClaude();
-    }
-  };
-
-  const handleAgentHover = () => {
-    if (!isFolderPickerOpen) {
-      setIsBypassMenuOpen(true);
-    }
-  };
-
-  const handleAgentLeave = () => {
-    if (!isFolderPickerOpen) {
-      setIsBypassMenuOpen(false);
+      onOpenAgent(type);
+      setIsAgentMenuOpen(false);
     }
   };
 
   const handleFolderSelect = (folder: WorkspaceFolder) => {
     setIsFolderPickerOpen(false);
-    const bypassPermissions = pendingBypassRef.current;
-    pendingBypassRef.current = false;
-    vscode.postMessage({ type: 'openClaude', folderPath: folder.path, bypassPermissions });
+    const agentType = pendingAgentType ?? 'claude';
+    setPendingAgentType(null);
+    onOpenAgent(agentType, folder.path);
   };
 
-  const handleBypassSelect = (bypassPermissions: boolean) => {
-    setIsBypassMenuOpen(false);
-    if (hasMultipleFolders) {
-      pendingBypassRef.current = bypassPermissions;
-      setIsFolderPickerOpen(true);
-    } else {
-      vscode.postMessage({ type: 'openClaude', bypassPermissions });
-    }
-  };
+  const agentTypes = [
+    { id: 'claude', label: 'Claude' },
+    { id: 'codex', label: 'Codex' },
+    { id: 'antigravity', label: 'Antigravity' },
+  ];
 
   return (
     <div className="absolute bottom-10 left-10 z-20 flex items-center gap-4 pixel-panel p-4">
-      <div
-        ref={folderPickerRef}
-        className="relative"
-        onMouseEnter={handleAgentHover}
-        onMouseLeave={handleAgentLeave}
-      >
+      <div ref={menuRef} className="relative">
         <Button
           variant="accent"
           onClick={handleAgentClick}
           className={
-            isFolderPickerOpen || isBypassMenuOpen
+            isAgentMenuOpen || isFolderPickerOpen
               ? 'bg-accent-bright'
               : 'bg-accent hover:bg-accent-bright'
           }
         >
           + Agent
         </Button>
-        <Dropdown isOpen={isBypassMenuOpen}>
-          <DropdownItem onClick={() => handleBypassSelect(true)}>
-            Skip permissions mode <span className="text-2xs text-warning">⚠</span>
-          </DropdownItem>
+        <Dropdown isOpen={isAgentMenuOpen}>
+          {agentTypes.map((agent) => (
+            <DropdownItem key={agent.id} onClick={() => handleAgentSelect(agent.id)}>
+              {agent.label}
+            </DropdownItem>
+          ))}
         </Dropdown>
         <Dropdown isOpen={isFolderPickerOpen} className="min-w-128">
           {workspaceFolders.map((folder) => (

@@ -12,6 +12,7 @@ import {
 } from '../server/src/providers/file/claudeHookInstaller.js';
 import { PixelAgentsServer } from '../server/src/server.js';
 import {
+  getAllProjectDirPaths,
   getProjectDirPath,
   launchNewTerminal,
   persistAgents,
@@ -163,7 +164,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
     webviewView.webview.html = getWebviewContent(webviewView.webview, this.extensionUri);
 
     webviewView.webview.onDidReceiveMessage(async (message) => {
-      if (message.type === 'openClaude') {
+      if (message.type === 'openClaude' || message.type === 'openAgent') {
         const prevAgentIds = new Set(this.agents.keys());
         await launchNewTerminal(
           this.nextAgentId,
@@ -179,6 +180,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
           this.projectScanTimer,
           this.webview,
           this.persistAgents,
+          message.agentType as string,
           message.folderPath as string | undefined,
           message.bypassPermissions as boolean | undefined,
         );
@@ -258,8 +260,8 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
           // Remove all external agents not from the current workspace folders
           const workspaceDirs = new Set<string>();
           for (const folder of vscode.workspace.workspaceFolders ?? []) {
-            const dir = getProjectDirPath(folder.uri.fsPath);
-            if (dir) workspaceDirs.add(dir);
+            const dir = getProjectDirPath('claude', folder.uri.fsPath);
+            workspaceDirs.add(dir);
           }
           const toRemove: number[] = [];
           for (const [id, agent] of this.agents) {
@@ -353,55 +355,39 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         }
 
         // Ensure project scan runs even with no restored agents (to adopt external terminals)
-        const projectDir = getProjectDirPath();
+        const projectDirs = getAllProjectDirPaths();
         const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
         console.log(`[Pixel Agents] Platform: ${process.platform}, arch: ${process.arch}`);
         console.log('[Extension] workspaceRoot:', workspaceRoot);
-        console.log('[Extension] projectDir:', projectDir);
-        ensureProjectScan(
-          projectDir,
-          this.knownJsonlFiles,
-          this.projectScanTimer,
-          this.activeAgentId,
-          this.nextAgentId,
-          this.agents,
-          this.fileWatchers,
-          this.pollingTimers,
-          this.waitingTimers,
-          this.permissionTimers,
-          this.webview,
-          this.persistAgents,
-          (agent) => this.registerAgentHook(agent),
-        );
-
-        // Start external session scanning (detects VS Code extension panel sessions)
-        if (!this.externalScanTimer) {
-          this.externalScanTimer = startExternalSessionScanning(
-            projectDir,
+        console.log('[Extension] projectDirs:', projectDirs);
+        if (projectDirs.length > 0) {
+          ensureProjectScan(
+            projectDirs,
             this.knownJsonlFiles,
+            this.projectScanTimer,
+            this.activeAgentId,
             this.nextAgentId,
             this.agents,
             this.fileWatchers,
             this.pollingTimers,
             this.waitingTimers,
             this.permissionTimers,
-            this.jsonlPollTimers,
             this.webview,
             this.persistAgents,
-            this.watchAllSessions,
+            (agent) => this.registerAgentHook(agent),
           );
 
           // In multi-root workspaces, also scan project dirs for all other folders
           // so agents running in any workspace folder are discovered
           if (wsFolders && wsFolders.length > 1) {
             for (const folder of wsFolders) {
-              const folderProjectDir = getProjectDirPath(folder.uri.fsPath);
-              if (folderProjectDir && folderProjectDir !== projectDir) {
+              const folderProjectDir = getProjectDirPath('claude', folder.uri.fsPath);
+              if (folderProjectDir && !projectDirs.includes(folderProjectDir)) {
                 console.log(
                   `[Pixel Agents] Registering additional project dir: ${folderProjectDir}`,
                 );
                 ensureProjectScan(
-                  folderProjectDir,
+                  [folderProjectDir],
                   this.knownJsonlFiles,
                   this.projectScanTimer,
                   this.activeAgentId,
@@ -417,6 +403,24 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
               }
             }
           }
+        }
+
+        // Start external session scanning (detects VS Code extension panel sessions)
+        if (!this.externalScanTimer) {
+          this.externalScanTimer = startExternalSessionScanning(
+            projectDirs[0] ?? '',
+            this.knownJsonlFiles,
+            this.nextAgentId,
+            this.agents,
+            this.fileWatchers,
+            this.pollingTimers,
+            this.waitingTimers,
+            this.permissionTimers,
+            this.jsonlPollTimers,
+            this.webview,
+            this.persistAgents,
+            this.watchAllSessions,
+          );
         }
         if (!this.staleCheckTimer) {
           this.staleCheckTimer = startStaleExternalAgentCheck(
@@ -536,7 +540,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         }
         this.webview?.postMessage({ type: 'agentDiagnostics', agents: diagnostics });
       } else if (message.type === 'openSessionsFolder') {
-        const projectDir = getProjectDirPath();
+        const projectDir = getProjectDirPath('claude'); // Use claude as default
         if (projectDir && fs.existsSync(projectDir)) {
           vscode.env.openExternal(vscode.Uri.file(projectDir));
         }

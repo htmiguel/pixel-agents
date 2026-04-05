@@ -208,7 +208,7 @@ export function isTrackedProjectDir(dir: string): boolean {
  * by the single shared interval timer.
  */
 export function ensureProjectScan(
-  projectDir: string,
+  projectDirs: string[],
   knownJsonlFiles: Set<string>,
   projectScanTimerRef: { current: ReturnType<typeof setInterval> | null },
   activeAgentIdRef: { current: number | null },
@@ -222,44 +222,47 @@ export function ensureProjectScan(
   persistAgents: () => void,
   _onAgentCreated?: (agent: AgentState) => void,
 ): void {
-  // Set deps for per-agent /clear detection (only on first call)
-  if (!clearDetectionDeps) {
-    clearDetectionDeps = {
-      projectDir,
-      knownJsonlFiles,
-      activeAgentIdRef,
-      fileWatchers,
-      pollingTimers,
-      waitingTimers,
-      permissionTimers,
-      webview,
-      persistAgents,
-    };
-  }
-
-  // Always seed this directory's files (supports multi-root workspaces).
-  try {
-    const files = fs
-      .readdirSync(projectDir)
-      .filter((f) => f.endsWith('.jsonl'))
-      .map((f) => path.join(projectDir, f));
-    for (const f of files) {
-      // Seed all files and track mtime. External scanner detects --resume
-      // by comparing current mtime to seeded mtime (changed = new writes).
-      knownJsonlFiles.add(f);
-      try {
-        const stat = fs.statSync(f);
-        seededMtimes.set(f, stat.mtimeMs);
-      } catch {
-        /* ignore */
-      }
+  // Seed all directories and register for periodic scanning
+  for (const projectDir of projectDirs) {
+    // Set deps for per-agent /clear detection (only on first call)
+    if (!clearDetectionDeps) {
+      clearDetectionDeps = {
+        projectDir,
+        knownJsonlFiles,
+        activeAgentIdRef,
+        fileWatchers,
+        pollingTimers,
+        waitingTimers,
+        permissionTimers,
+        webview,
+        persistAgents,
+      };
     }
-  } catch {
-    /* dir may not exist yet */
-  }
 
-  // Register for periodic scanning
-  trackedProjectDirs.add(projectDir);
+    // Always seed this directory's files (supports multi-root workspaces).
+    try {
+      const files = fs
+        .readdirSync(projectDir)
+        .filter((f) => f.endsWith('.jsonl'))
+        .map((f) => path.join(projectDir, f));
+      for (const f of files) {
+        // Seed all files and track mtime. External scanner detects --resume
+        // by comparing current mtime to seeded mtime (changed = new writes).
+        knownJsonlFiles.add(f);
+        try {
+          const stat = fs.statSync(f);
+          seededMtimes.set(f, stat.mtimeMs);
+        } catch {
+          /* ignore */
+        }
+      }
+    } catch {
+      /* dir may not exist yet */
+    }
+
+    // Register for periodic scanning
+    trackedProjectDirs.add(projectDir);
+  }
 
   // Start the shared timer only once
   if (projectScanTimerRef.current) return;

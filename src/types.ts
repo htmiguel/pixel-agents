@@ -1,5 +1,7 @@
 import type * as vscode from 'vscode';
 
+export type AgentType = 'claude' | 'codex' | 'antigravity';
+
 export interface AgentState {
   id: number;
   /** Backend/provider identifier (e.g. 'claude', 'codex', 'cursor'). */
@@ -11,6 +13,7 @@ export interface AgentState {
   isExternal: boolean;
   projectDir: string;
   jsonlFile: string;
+  agentType: AgentType;
   fileOffset: number;
   lineBuffer: string;
   activeToolIds: Set<string>;
@@ -45,6 +48,7 @@ export interface PersistedAgent {
   isExternal?: boolean;
   jsonlFile: string;
   projectDir: string;
+  agentType?: AgentType;
   /** Workspace folder name (only set for multi-root workspaces) */
   folderName?: string;
 }
