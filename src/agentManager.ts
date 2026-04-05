@@ -388,7 +388,7 @@ export function restoreAgents(
     // Copilot agents are re-created by CopilotAdapter on every startup — skip restoring them.
     // Copilot CLI agents have no JSONL tracking — skip restoring them too.
     const pAgentType = p.agentType ?? 'claude';
-    if (pAgentType === 'copilot' || pAgentType === 'copilot-cli') continue;
+    if (pAgentType === 'copilot' || pAgentType === 'copilot-cli' || pAgentType === 'cursor') continue;
 
     if (isExternal) {
       // External agents — restore if JSONL file still exists on disk

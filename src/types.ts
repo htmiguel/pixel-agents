@@ -6,6 +6,7 @@ export type AgentType =
   | 'antigravity'
   | 'copilot'
   | 'copilot-cli'
+  | 'cursor'
   | 'opencode'
   | 'vscode-terminal';
 

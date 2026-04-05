@@ -23,6 +23,16 @@ export const WORKSPACE_KEY_LAYOUT = 'pixel-agents.layout';
 export const TERMINAL_NAME_PREFIX = 'Claude Code';
 export const COPILOT_CLI_TERMINAL_NAME_PREFIX = 'Copilot CLI';
 
+// ── Cursor Integration ──────────────────────────────────────
+/** Root directory where Cursor stores per-project agent transcripts */
+export const CURSOR_PROJECTS_DIR = '.cursor/projects';
+/** Subdirectory within a Cursor project dir that holds agent session dirs */
+export const CURSOR_TRANSCRIPTS_SUBDIR = 'agent-transcripts';
+/** After this idle period with no new JSONL lines, mark Cursor agent as waiting */
+export const CURSOR_IDLE_TIMEOUT_MS = 5000;
+/** Polling interval for tailing Cursor JSONL files (ms) */
+export const CURSOR_POLL_INTERVAL_MS = 500;
+
 // ── GitHub Copilot Integration ──────────────────────────────
 /** Extension ID for GitHub Copilot Chat (used to detect if Copilot is installed) */
 export const COPILOT_EXTENSION_ID = 'GitHub.copilot-chat';

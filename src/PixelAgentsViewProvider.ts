@@ -12,6 +12,7 @@ import {
 } from '../server/src/providers/file/claudeHookInstaller.js';
 import { PixelAgentsServer } from '../server/src/server.js';
 import { CopilotAdapter } from './adapters/copilot.js';
+import { CursorAdapter } from './adapters/cursor.js';
 import {
   getAllProjectDirPaths,
   getProjectDirPath,
@@ -83,6 +84,8 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 
   // GitHub Copilot adapter disposable
   private copilotAdapterDisposable: vscode.Disposable | null = null;
+  // Cursor background-agent adapter disposable
+  private cursorAdapterDisposable: vscode.Disposable | null = null;
 
   // Global session scanning (opt-in "Watch All Sessions" toggle)
   watchAllSessions = { current: false };
@@ -169,6 +172,13 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 
     webviewView.webview.onDidReceiveMessage(async (message) => {
       if (message.type === 'openClaude' || message.type === 'openAgent') {
+        // Cursor agents are auto-discovered passively — no terminal launch needed
+        if (message.agentType === 'cursor') {
+          void vscode.window.showInformationMessage(
+            'Cursor agents are detected automatically. Start a background agent in Cursor and it will appear here.',
+          );
+          return;
+        }
         const prevAgentIds = new Set(this.agents.keys());
         await launchNewTerminal(
           this.nextAgentId,
@@ -318,6 +328,15 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         // Start GitHub Copilot adapter (no-op when Copilot Chat is not installed)
         if (!this.copilotAdapterDisposable) {
           this.copilotAdapterDisposable = new CopilotAdapter().start({
+            agents: this.agents,
+            nextAgentIdRef: this.nextAgentId,
+            webview: this.webview,
+            persistAgents: this.persistAgents,
+          });
+        }
+        // Start Cursor background-agent adapter
+        if (!this.cursorAdapterDisposable) {
+          this.cursorAdapterDisposable = new CursorAdapter().start({
             agents: this.agents,
             nextAgentIdRef: this.nextAgentId,
             webview: this.webview,
@@ -792,6 +811,8 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
     }
     this.copilotAdapterDisposable?.dispose();
     this.copilotAdapterDisposable = null;
+    this.cursorAdapterDisposable?.dispose();
+    this.cursorAdapterDisposable = null;
   }
 }
 

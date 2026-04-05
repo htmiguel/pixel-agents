@@ -66,6 +66,7 @@ export function BottomToolbar({
 
   const agentTypes = [
     { id: 'claude', label: 'Claude' },
+    { id: 'cursor', label: 'Cursor' },
     { id: 'codex', label: 'Codex' },
     { id: 'antigravity', label: 'Antigravity' },
     { id: 'copilot-cli', label: 'Copilot CLI' },
